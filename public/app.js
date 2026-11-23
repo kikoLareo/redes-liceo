@@ -80,12 +80,16 @@ async function cargar() {
   const r = await api("/api/datos"); if (!r.ok) throw new Error("datos");
   const j = await r.json(); IA = !!j.ia; for (const c of COLS) D[c] = j[c] || [];
   asegurarEquipo();
-  asegurarOKLiga();
+  asegurarCalendarios();
 }
-// Si aún no hay ningún partido de OK Liga, carga el calendario 2026/27 una vez.
-function asegurarOKLiga() {
-  if (D.partidos.some((p) => p.competicion === "OK Liga")) return;
-  escribir(OKLIGA_2627.map((x, i) => ({ op: "set", col: "partidos", id: `okliga2627-j${i + 1}`, data: { ...x, creado: new Date().toISOString() } })));
+// Si aún no hay partidos de una competición, carga su calendario 2026/27 una vez.
+function asegurarCalendarios() {
+  const ops = [];
+  for (const [comp, lista, pref] of [["OK Liga", OKLIGA_2627, "okliga2627-j"], ["Champions", CHAMPIONS_2627, "champions2627-j"]]) {
+    if (D.partidos.some((p) => p.competicion === comp)) continue;
+    lista.forEach((x, i) => ops.push({ op: "set", col: "partidos", id: `${pref}${i + 1}`, data: { ...x, creado: new Date().toISOString() } }));
+  }
+  if (ops.length) escribir(ops);
 }
 // Aplica cambios en local al instante y los manda a Netlify.
 async function escribir(lista) {
@@ -737,6 +741,17 @@ const OKLIGA_2627 = [
   [25, "", "", true, "Voltregà", RIAZOR, ""],
   [26, "", "", false, "Lleida", "Pavelló Municipal Onze de Setembre, Lleida", ""],
 ].map(([j, f, h, casa, rival, lugar, resultado]) => ({ fecha: f ? `${f}T${h}` : "", rival, casa, competicion: "OK Liga", jornada: `Jornada ${j}`, lugar, resultado, notas: f ? "" : "Fecha y hora por confirmar." }));
+
+// WSE Champions League 2026/27, fase de grupos: partidos del Liceo (copiados a mano del calendario de la WSE, 20-11-2026).
+const HORA_PT = "Hora tal como sale en el calendario de la WSE: confirmar si es hora de Portugal (una hora menos que en España).";
+const CHAMPIONS_2627 = [
+  [1, "2026-11-26", "20:00", false, "Calafell", "Pavelló Municipal Joan Ortoll, Calafell", ""],
+  [2, "2026-12-10", "20:30", true, "Benfica", RIAZOR, ""],
+  [3, "2027-01-07", "21:00", false, "Braga", "Braga (Portugal)", HORA_PT],
+  [4, "2027-01-21", "20:30", true, "Porto", RIAZOR, ""],
+  [5, "2027-02-11", "20:00", false, "Sporting CP", "Lisboa (Portugal)", HORA_PT],
+  [6, "2027-02-25", "", true, "Igualada", RIAZOR, "Hora por confirmar."],
+].map(([j, f, h, casa, rival, lugar, notas]) => ({ fecha: h ? `${f}T${h}` : f, rival, casa, competicion: "Champions", jornada: `Fase de grupos J${j}`, lugar, resultado: "", notas }));
 const normaliza = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 // ¿Ya tenemos este partido? Mismo rival y competición, y misma jornada (o misma fecha si no hay jornada).
 function partidoExistente(x) {
@@ -759,7 +774,7 @@ async function leerImportacion(cuerpo) {
 }
 function importarPartidos() {
   abrirModal(`<h2>Importar partidos</h2>
-    <button class="btn" id="impOK">🏑 Cargar OK Liga 2026/27 (26 jornadas)</button>
+    <div class="row"><button class="btn sm" id="impOK">🏑 OK Liga 2026/27</button><button class="btn sm" id="impCH">⭐ Champions 2026/27</button></div>
     ${IA ? `<div class="stack"><label class="f">O pega un calendario en texto<textarea class="inp" id="impTxt" style="min-height:110px" placeholder="Copiado a mano de una web, un PDF, un WhatsApp…"></textarea></label>
       <span class="muted small">Si cambian horarios, vuelve a pegarlo: los partidos que ya estén se actualizan en vez de duplicarse.</span></div>`
     : `<p class="muted small" style="margin:0">Sin IA: una línea por partido con el formato <code>2026-12-06 18:00; Rival; casa|fuera; Competición; Lugar</code>.</p><textarea class="inp" id="impTxt" style="min-height:180px"></textarea>`}
@@ -787,6 +802,7 @@ function importarPartidos() {
       b.textContent = encontrados.length ? "Guardar los marcados" : "✨ Analizar";
     };
     $("#impOK", m).addEventListener("click", () => { encontrados = []; analizar({ lista: OKLIGA_2627 }, "OK Liga"); });
+    $("#impCH", m).addEventListener("click", () => { encontrados = []; analizar({ lista: CHAMPIONS_2627 }, "Champions"); });
     b.addEventListener("click", async () => {
       if (encontrados.length) {
         const ops = [];
