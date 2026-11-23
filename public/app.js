@@ -81,6 +81,43 @@ async function cargar() {
   const j = await r.json(); IA = !!j.ia; for (const c of COLS) D[c] = j[c] || [];
   asegurarEquipo();
   asegurarCalendarios();
+  asegurarVideos();
+}
+// Vídeos de patrocinio 2026/27 (lista del club). [id, patrocinador, nº vídeos, ya hechos, nota]
+const GRUPO_VIDEOS = "Vídeos patrocinio 26/27";
+const VIDEOS_2627 = [
+  ["csc", "CSC Coruña Sport Centre", 2, 1, "Uno ya realizado por Kiko."],
+  ["culuca", "Obrador Culuca", 1, 0, ""],
+  ["savisu", "Savisu Soluciones", 3, 0, "Grada Solidaria."],
+  ["marineda", "Marineda City", 1, 0, ""],
+  ["longomatch", "Longomatch", 0, 0, "EXENTO"],
+  ["llaves", "Llaves Unión", 1, 0, ""],
+  ["kia", "Kia Corgal", 1, 0, ""],
+  ["dorirocha", "Frutería Dori Rocha", 0, 0, "EXENTO"],
+  ["226ers", "226ERS", 0, 0, "EXENTO"],
+  ["empanada", "Empanada Viajera", 2, 0, ""],
+  ["dntl", "DNTL Chao", 2, 0, ""],
+  ["bonilla", "Bonilla a la Vista", 1, 0, ""],
+  ["aldeade", "Aldeade", 2, 0, ""],
+  ["laparda", "La Parda", 2, 0, ""],
+];
+// Crea una vez los patrocinadores (Contactos) y una tarea por patrocinador con un paso por vídeo.
+function asegurarVideos() {
+  if (D.contactos.some((c) => c.id.startsWith("pat2627-")) || D.tareas.some((t) => t.grupo === GRUPO_VIDEOS)) return;
+  const ahora = new Date().toISOString(); const ops = [];
+  for (const [id, nombre, n, hechos, nota] of VIDEOS_2627) {
+    const exento = nota === "EXENTO";
+    ops.push({ op: "set", col: "contactos", id: `pat2627-${id}`, data: { nombre, empresa: nombre, tipo: "Patrocinador", estado: "cerrado", notas: exento ? "Exento de vídeo de patrocinio en la temporada 2026/27." : `Vídeos de patrocinio 2026/27: ${n}.${nota ? " " + nota : ""}`, creado: ahora } });
+    if (exento) continue;
+    ops.push({ op: "set", col: "tareas", id: `vid2627-${id}`, data: {
+      titulo: `🎬 Vídeo${n > 1 ? "s" : ""} patrocinio · ${nombre}`, grupo: GRUPO_VIDEOS, contactoId: `pat2627-${id}`,
+      estado: hechos >= n ? "hecho" : hechos ? "curso" : "pendiente", asignados: [], prioridad: "normal",
+      descripcion: `Grabar ${n} vídeo${n > 1 ? "s" : ""} para **${nombre}** (patrocinio temporada 2026/27).${nota ? `\n\n${nota}` : ""}`,
+      checklist: Array.from({ length: n }, (_, i) => ({ t: `Vídeo ${i + 1}${i < hechos ? " (hecho por Kiko)" : ""}`, ok: i < hechos })),
+      creado: ahora,
+    } });
+  }
+  escribir(ops);
 }
 // Si aún no hay partidos de una competición, carga su calendario 2026/27 una vez.
 function asegurarCalendarios() {
@@ -212,6 +249,7 @@ function filtroPersonaTareas(ts, quien) {
   if (quien === "todas") return ts;
   if (quien === "compartidas") return ts.filter((t) => (t.asignados || []).length > 1);
   if (quien === "sin") return ts.filter((t) => !(t.asignados || []).length);
+  if (quien === "videos") return ts.filter((t) => t.grupo === GRUPO_VIDEOS);
   return ts.filter((t) => (t.asignados || []).includes(quien));
 }
 function chipsPersonas(sel, extra = []) {
@@ -364,6 +402,15 @@ function enganchaTareas(el) {
     render();
   }));
 }
+function progresoVideos() {
+  const ts = D.tareas.filter((t) => t.grupo === GRUPO_VIDEOS);
+  const total = ts.reduce((n, t) => n + (t.checklist || []).length, 0);
+  const hechos = ts.reduce((n, t) => n + (t.checklist || []).filter((c) => c.ok).length, 0);
+  const pct = total ? Math.round((hechos / total) * 100) : 0;
+  return `<div class="card" style="margin-top:12px"><div class="between"><b>🎬 Vídeos grabados</b><span class="cuenta">${hechos} de ${total}</span></div>
+    <div style="height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:8px"><i style="display:block;height:100%;width:${pct}%;background:var(--done)"></i></div>
+    <p class="muted small" style="margin:8px 0 0">Marca cada vídeo en el checklist de su tarea. Exentos: Longomatch, Frutería Dori Rocha y 226ERS.</p></div>`;
+}
 function vistaTareas() {
   titulo("Tareas");
   const pinta = () => {
@@ -373,7 +420,8 @@ function vistaTareas() {
     const hechas = ts.filter((t) => t.estado === "hecho").sort((a, b) => (b.hechoEn || b.editado || "").localeCompare(a.hechoEn || a.editado || ""));
     app.innerHTML = `
       <div class="between"><h1>Tareas</h1><button class="btn pri sm" id="nueva">+ Nueva</button></div>
-      <div class="chips" style="margin-top:12px">${chipsPersonas(tareaEstado.quien, [["sin", "Sin asignar"]])}</div>
+      <div class="chips" style="margin-top:12px">${chipsPersonas(tareaEstado.quien, [["videos", "🎬 Vídeos patrocinio"], ["sin", "Sin asignar"]])}</div>
+      ${tareaEstado.quien === "videos" ? progresoVideos() : ""}
       ${grupo("curso", ts.filter((t) => t.estado === "curso").sort(orden), 999)}
       ${grupo("pendiente", ts.filter((t) => (t.estado || "pendiente") === "pendiente").sort(orden), 999)}
       ${grupo("hecho", hechas, 15)}
@@ -473,7 +521,16 @@ function editorPagina(col, id) {
     const pintaCk = () => {
       const ck = doc.checklist || [];
       $("#ck").innerHTML = ck.map((c, i) => `<div class="ck ${c.ok ? "ok" : ""}"><input type="checkbox" data-i="${i}" ${c.ok ? "checked" : ""}><input type="text" data-t="${i}" value="${esc(c.t)}" placeholder="Paso…"><button class="btn sm ghost" data-x="${i}" aria-label="Quitar">✕</button></div>`).join("") || `<p class="muted small">Divide la tarea en pasos si hace falta.</p>`;
-      $$("[data-i]", $("#ck")).forEach((b) => b.addEventListener("change", () => { ck[b.dataset.i].ok = b.checked; guarda({ checklist: ck }); pintaCk(); }));
+      $$("[data-i]", $("#ck")).forEach((b) => b.addEventListener("change", () => {
+        ck[b.dataset.i].ok = b.checked;
+        // Estado automático según los pasos: todos → hecho; alguno → en curso.
+        const n = ck.filter((c) => c.ok).length;
+        const estado = n === ck.length ? "hecho" : n ? "curso" : doc.estado === "hecho" ? "pendiente" : doc.estado;
+        const extra = estado !== doc.estado ? { estado, ...(estado === "hecho" ? { hechoPor: yoId, hechoEn: new Date().toISOString() } : {}) } : {};
+        guarda({ checklist: ck, ...extra });
+        if (extra.estado) { $("#pEstado").value = estado; if (estado === "hecho") toast("¡Tarea completada! ✓"); }
+        pintaCk();
+      }));
       $$("[data-t]", $("#ck")).forEach((b) => b.addEventListener("input", debounce(() => { ck[b.dataset.t].t = b.value; guarda({ checklist: ck }); }, 500)));
       $$("[data-x]", $("#ck")).forEach((b) => b.addEventListener("click", () => { ck.splice(b.dataset.x, 1); guarda({ checklist: ck }); pintaCk(); }));
     };
