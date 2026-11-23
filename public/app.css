@@ -21,7 +21,8 @@
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 16px)}
+/* padding-top: deja sitio a la barra de estado del iPhone (app abierta desde el icono), así la cabecera no tapa el contenido */
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;padding-top:env(safe-area-inset-top,0px);padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 16px)}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--head)}
 button,input,select,textarea{font:inherit;color:inherit}
 a{color:var(--accent)}

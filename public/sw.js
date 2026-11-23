@@ -1,6 +1,6 @@
 // Service worker mínimo: permite abrir la app sin conexión (con los últimos ficheros) y nada más.
 // Los datos (/api, /cal) siempre van a la red.
-const CACHE = "redes-liceo-v1";
+const CACHE = "redes-liceo-v2";
 const BASE = ["/", "/app.css", "/app.js", "/manifest.webmanifest", "/icon-192.png", "/icon-180.png"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(BASE)).then(() => self.skipWaiting()));
