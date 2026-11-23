@@ -22,9 +22,10 @@ const DSEM = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const hora = (f) => (f && f.length > 10 ? f.slice(11, 16) : "");
 function fechaCorta(f) { if (!f) return ""; const d = aFecha(f); return `${DSEM[d.getDay()]} ${d.getDate()} ${MESES[d.getMonth()].slice(0, 3)}${hora(f) ? " · " + hora(f) : ""}`; }
-function fechaLarga(s) { const d = aFecha(s); const h = hoyStr(); const pre = s === h ? "Hoy · " : s === sumarDias(h, 1) ? "Mañana · " : ""; return `${pre}${DSEM[d.getDay()]} ${d.getDate()} de ${MESES[d.getMonth()]}`; }
+function fechaLarga(s) { if (!s) return "Fecha por confirmar"; const d = aFecha(s); const h = hoyStr(); const pre = s === h ? "Hoy · " : s === sumarDias(h, 1) ? "Mañana · " : ""; return `${pre}${DSEM[d.getDay()]} ${d.getDate()} de ${MESES[d.getMonth()]}`; }
 function cuentaAtras(f) {
-  const ms = aFecha(f) - new Date(); if (ms < 0) return "en juego / jugado";
+  if (!f) return "fecha por confirmar";
+  const ms = aFecha(f) - new Date(); if (ms < 0) return "jugado";
   const d = Math.floor(ms / 864e5), h = Math.floor((ms % 864e5) / 36e5);
   return d > 0 ? `faltan ${d} d ${h} h` : `faltan ${h} h ${Math.floor((ms % 36e5) / 6e4)} min`;
 }
@@ -79,6 +80,12 @@ async function cargar() {
   const r = await api("/api/datos"); if (!r.ok) throw new Error("datos");
   const j = await r.json(); IA = !!j.ia; for (const c of COLS) D[c] = j[c] || [];
   asegurarEquipo();
+  asegurarOKLiga();
+}
+// Si aún no hay ningún partido de OK Liga, carga el calendario 2026/27 una vez.
+function asegurarOKLiga() {
+  if (D.partidos.some((p) => p.competicion === "OK Liga")) return;
+  escribir(OKLIGA_2627.map((x, i) => ({ op: "set", col: "partidos", id: `okliga2627-j${i + 1}`, data: { ...x, creado: new Date().toISOString() } })));
 }
 // Aplica cambios en local al instante y los manda a Netlify.
 async function escribir(lista) {
@@ -261,7 +268,7 @@ function partidoCard(p, destacado) {
   return `<a class="card${destacado ? " prox" : ""}" href="#/partido/${p.id}">
     <div class="row"><span class="badge ${p.casa ? "casa" : "fuera"}">${p.casa ? "Casa" : "Fuera"}</span>${p.competicion ? `<span class="badge comp">${esc(p.competicion)}</span>` : ""}${p.jornada ? `<span class="muted small">${esc(p.jornada)}</span>` : ""}</div>
     <div class="vs">${esc(vsTxt(p))}</div>
-    <div class="meta"><span>📅 ${esc(fechaCorta(p.fecha))}</span>${p.lugar ? `<span>📍 ${esc(p.lugar)}</span>` : ""}${p.tv ? `<span>📺 ${esc(p.tv)}</span>` : ""}${p.resultado ? `<b>${esc(p.resultado)}</b>` : ""}</div>
+    <div class="meta"><span>📅 ${esc(fechaCorta(p.fecha) || "Fecha por confirmar")}</span>${p.lugar ? `<span>📍 ${esc(p.lugar)}</span>` : ""}${p.tv ? `<span>📺 ${esc(p.tv)}</span>` : ""}${p.resultado ? `<b>${esc(p.resultado)}</b>` : ""}</div>
     ${destacado ? `<div class="between" style="margin-top:8px"><span class="cuenta">${cuentaAtras(p.fecha)}</span>${nT.length ? `<span class="muted small">${hechas}/${nT.length} tareas hechas</span>` : ""}</div>` : ""}
   </a>`;
 }
@@ -617,13 +624,14 @@ function vistaPartidos() {
   titulo("Partidos");
   const f = ls.get("rl-partidos", "prox");
   const ahora = new Date(Date.now() - 3 * 36e5);
-  let ps = D.partidos.slice().sort((a, b) => (a.fecha || "").localeCompare(b.fecha || ""));
+  let ps = D.partidos.slice().sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999"));
   ps = f === "prox" ? ps.filter((p) => !p.fecha || aFecha(p.fecha) >= ahora) : f === "jugados" ? ps.filter((p) => p.fecha && aFecha(p.fecha) < ahora).reverse() : ps.filter((p) => p.competicion === f);
   app.innerHTML = `
     <a class="btn sm ghost" href="#/mas">‹ Más</a>
     <div class="between" style="margin-top:6px"><h1>Partidos</h1><span class="row"><button class="btn sm" id="imp">${IA ? "✨ " : ""}Importar</button><button class="btn pri sm" id="nuevo">+ Partido</button></span></div>
     <div class="chips" style="margin-top:12px">${[["prox", "Próximos"], ["jugados", "Jugados"], ...["OK Liga", "Copa del Rey", "Champions"].map((c) => [c, c])].map(([k, v]) => `<button class="chip" data-f="${k}" aria-pressed="${f === k}">${v}</button>`).join("")}</div>
-    <div class="stack" style="margin-top:14px">${ps.map((p) => partidoCard(p)).join("") || `<div class="vacio">No hay partidos aquí. Añádelos uno a uno o impórtalos pegando el calendario.</div>`}</div>`;
+    <div class="stack" style="margin-top:14px">${ps.map((p) => `<div class="con-editar">${partidoCard(p)}<button class="btn sm editar" data-editar="${p.id}" aria-label="Editar partido">✏️</button></div>`).join("") || `<div class="vacio">No hay partidos aquí. Añádelos uno a uno o impórtalos pegando el calendario.</div>`}</div>`;
+  $$("[data-editar]").forEach((x) => x.addEventListener("click", () => formPartido(partido(x.dataset.editar))));
   $$("[data-f]").forEach((b) => b.addEventListener("click", () => { ls.set("rl-partidos", b.dataset.f); render(); }));
   $("#nuevo").addEventListener("click", () => formPartido({ casa: true, competicion: "OK Liga" }));
   $("#imp").addEventListener("click", importarPartidos);
@@ -640,7 +648,7 @@ function vistaPartido(id) {
       <div class="row"><span class="badge ${p.casa ? "casa" : "fuera"}">${p.casa ? "Casa" : "Fuera"}</span>${p.competicion ? `<span class="badge comp">${esc(p.competicion)}</span>` : ""}${p.jornada ? `<span class="muted small">${esc(p.jornada)}</span>` : ""}</div>
       <h1 style="margin:8px 0">${esc(vsTxt(p))}</h1>
       <div class="stack small">
-        <span>📅 ${esc(fechaLarga(p.fecha.slice(0, 10)))}${hora(p.fecha) ? ` · ${hora(p.fecha)}` : ""} · <span class="cuenta">${cuentaAtras(p.fecha)}</span></span>
+        <span>📅 ${esc(fechaLarga((p.fecha || "").slice(0, 10)))}${hora(p.fecha) ? ` · ${hora(p.fecha)}` : ""}${p.fecha ? ` · <span class="cuenta">${cuentaAtras(p.fecha)}</span>` : ""}</span>
         ${p.lugar ? `<span>📍 <a href="${mapa}" target="_blank" rel="noopener">${esc(p.lugar)}</a></span>` : ""}
         ${p.tv ? `<span>📺 ${esc(p.tv)}</span>` : ""}${p.resultado ? `<span>🏁 Resultado: <b>${esc(p.resultado)}</b></span>` : ""}
         ${p.notas ? `<div class="md">${md(p.notas)}</div>` : ""}
@@ -698,11 +706,37 @@ function formPartido(p = {}) {
     onBorrar: p.id ? () => { borrar("partidos", p.id); if (location.hash.includes(p.id)) location.hash = "#/partidos"; } : null,
   });
 }
-// Calendarios oficiales: se pueden volver a importar para recoger cambios de fecha u hora.
-const FUENTES = [
-  { nombre: "OK Liga", url: "https://www.hockeypatines.fep.es/?liga=3568&vista=calendar" },
-  { nombre: "Champions", url: "https://www.wse.sidgad.com/?liga=339&vista=calendar" },
-];
+// OK Liga 2026/27: partidos del Liceo (copiados a mano del calendario de la RFEP, informe del 22-11-2026).
+// Formato: [jornada, fecha, hora, casa, rival, lugar, resultado]. Fecha vacía = por confirmar.
+const RIAZOR = "Pazo dos Deportes de Riazor, A Coruña";
+const OKLIGA_2627 = [
+  [1, "2026-10-31", "20:00", false, "Caldes", "Pavelló Hoquei Caldes de Montbui", "3-1"],
+  [2, "2026-11-08", "12:30", true, "Barça", RIAZOR, "0-1"],
+  [3, "2026-11-14", "20:00", false, "Shum", "Pavelló Municipal Maçanet de la Selva", "2-3"],
+  [4, "2026-11-21", "17:00", true, "Rivas", RIAZOR, "4-0"],
+  [5, "2026-11-29", "12:30", false, "Igualada", "Complejo Deportivo Les Comes, Igualada", ""],
+  [6, "2026-12-02", "20:30", true, "Reus", RIAZOR, ""],
+  [7, "2026-12-05", "19:00", true, "Vilafranca", RIAZOR, ""],
+  [8, "2026-12-16", "21:00", false, "PAS Alcoi", "Polideportivo Francisco Laporta, Alcoi", ""],
+  [9, "2026-12-19", "19:00", true, "Lloret", RIAZOR, ""],
+  [10, "2026-12-22", "20:00", false, "Calafell", "Pavelló Municipal Joan Ortoll, Calafell", ""],
+  [11, "2027-01-03", "12:00", true, "Noia", RIAZOR, ""],
+  [12, "2027-01-10", "12:30", false, "Voltregà", "Pabelló Municipal Oliveras de la Riva", ""],
+  [13, "", "", true, "Lleida", RIAZOR, ""],
+  [14, "2027-01-24", "12:00", true, "Caldes", RIAZOR, ""],
+  [15, "2027-01-30", "18:00", false, "Barça", "Palau Blaugrana, Barcelona", ""],
+  [16, "2027-02-03", "20:30", true, "Shum", RIAZOR, ""],
+  [17, "2027-02-06", "13:00", false, "Rivas", "Polideportivo Cerro del Telégrafo, Rivas-Vaciamadrid", ""],
+  [18, "2027-02-14", "12:00", true, "Igualada", RIAZOR, ""],
+  [19, "2027-02-20", "21:00", false, "Reus", "Palau d'Esports de Reus", ""],
+  [20, "2027-02-27", "20:00", false, "Vilafranca", "Club Patí Vilafranca Capital del Vi", ""],
+  [21, "2027-03-13", "19:00", true, "PAS Alcoi", RIAZOR, ""],
+  [22, "2027-04-03", "20:30", false, "Lloret", "Pavelló Municipal de Lloret de Mar", ""],
+  [23, "2027-04-10", "19:00", true, "Calafell", RIAZOR, ""],
+  [24, "2027-04-14", "21:00", false, "Noia", "Pavelló Olímpic de l'Ateneu, Sant Sadurní", ""],
+  [25, "", "", true, "Voltregà", RIAZOR, ""],
+  [26, "", "", false, "Lleida", "Pavelló Municipal Onze de Setembre, Lleida", ""],
+].map(([j, f, h, casa, rival, lugar, resultado]) => ({ fecha: f ? `${f}T${h}` : "", rival, casa, competicion: "OK Liga", jornada: `Jornada ${j}`, lugar, resultado, notas: f ? "" : "Fecha y hora por confirmar." }));
 const normaliza = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 // ¿Ya tenemos este partido? Mismo rival y competición, y misma jornada (o misma fecha si no hay jornada).
 function partidoExistente(x) {
@@ -725,49 +759,49 @@ async function leerImportacion(cuerpo) {
 }
 function importarPartidos() {
   abrirModal(`<h2>Importar partidos</h2>
-    ${IA ? `<div class="stack"><span class="muted small">Desde los calendarios oficiales (puedes repetirlo cuando cambien horarios: actualiza los que ya están):</span>
-      <div class="row">${FUENTES.map((f, i) => `<button class="btn sm" data-fuente="${i}">🔄 ${esc(f.nombre)}</button>`).join("")}</div>
-      <label class="f">O pega un enlace<input class="inp" id="impUrl" type="url" placeholder="https://…"></label>
-      <label class="f">O pega el calendario en texto<textarea class="inp" id="impTxt" style="min-height:110px" placeholder="Copiado de una web, un PDF, un WhatsApp…"></textarea></label></div>`
+    <button class="btn" id="impOK">🏑 Cargar OK Liga 2026/27 (26 jornadas)</button>
+    ${IA ? `<div class="stack"><label class="f">O pega un calendario en texto<textarea class="inp" id="impTxt" style="min-height:110px" placeholder="Copiado a mano de una web, un PDF, un WhatsApp…"></textarea></label>
+      <span class="muted small">Si cambian horarios, vuelve a pegarlo: los partidos que ya estén se actualizan en vez de duplicarse.</span></div>`
     : `<p class="muted small" style="margin:0">Sin IA: una línea por partido con el formato <code>2026-12-06 18:00; Rival; casa|fuera; Competición; Lugar</code>.</p><textarea class="inp" id="impTxt" style="min-height:180px"></textarea>`}
     <div id="impPrev"></div>
     <div class="pie"><button class="btn ghost" data-cerrar>Cancelar</button><button class="btn pri" id="impGo">${IA ? "✨ Analizar" : "Analizar"}</button></div>`, (m) => {
     let encontrados = [];
     const b = $("#impGo", m);
     const analizar = async (cuerpo, etiqueta) => {
-      b.disabled = true; $$("[data-fuente]", m).forEach((x) => (x.disabled = true));
+      b.disabled = true;
       $("#impPrev", m).innerHTML = `<div class="vacio escribiendo">${esc(etiqueta)}: leyendo el calendario (puede tardar un poco)</div>`;
       try {
-        if (IA) encontrados = await leerImportacion(cuerpo);
+        if (cuerpo.lista) encontrados = cuerpo.lista.map((x) => ({ ...x }));
+        else if (IA) encontrados = await leerImportacion(cuerpo);
         else encontrados = cuerpo.texto.split("\n").map((l) => l.split(";").map((x) => x.trim())).filter((c) => c.length >= 3).map(([f, rival, cf, competicion = "OK Liga", lugar = ""]) => ({ fecha: f.replace(" ", "T"), rival, casa: /casa/i.test(cf), competicion, lugar: lugar || (/casa/i.test(cf) ? "Pazo dos Deportes de Riazor, A Coruña" : ""), jornada: "" }));
       } catch (e) { encontrados = []; toast(e.message || "No se pudo analizar", 5000); }
-      b.disabled = false; $$("[data-fuente]", m).forEach((x) => (x.disabled = false));
-      encontrados.sort((a, c) => (a.fecha || "").localeCompare(c.fecha || ""));
+      b.disabled = false;
+      encontrados.sort((a, c) => (a.fecha || "9999").localeCompare(c.fecha || "9999"));
       const filas = encontrados.map((x, i) => {
         const ex = partidoExistente(x); x._ex = ex;
-        const cambia = ex && (ex.fecha !== x.fecha || (x.lugar && ex.lugar !== x.lugar));
-        const nota = !ex ? "nuevo" : cambia ? `cambia: ${fechaCorta(ex.fecha)} → ${fechaCorta(x.fecha)}` : "ya estaba";
-        return `<label class="item"><input type="checkbox" id="imp${i}" ${!ex || cambia ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)"><span><span class="tt">${esc(vsTxt(x))}</span><br><span class="muted small">${esc(fechaCorta(x.fecha))} · ${esc(x.competicion)}${x.jornada ? " · " + esc(x.jornada) : ""}</span><br><span class="small" style="color:${!ex ? "var(--accent)" : cambia ? "var(--warn)" : "var(--muted)"}">${esc(nota)}</span></span><span></span></label>`;
+        const cambia = ex && ((x.fecha && ex.fecha !== x.fecha) || (x.lugar && ex.lugar !== x.lugar) || (x.resultado && ex.resultado !== x.resultado));
+        const nota = !ex ? "nuevo" : cambia ? (ex.fecha !== x.fecha && x.fecha ? `cambia: ${fechaCorta(ex.fecha) || "sin fecha"} → ${fechaCorta(x.fecha)}` : "se actualiza") : "ya estaba";
+        return `<label class="item"><input type="checkbox" id="imp${i}" ${!ex || cambia ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)"><span><span class="tt">${esc(vsTxt(x))}${x.resultado ? ` · ${esc(x.resultado)}` : ""}</span><br><span class="muted small">${esc(fechaCorta(x.fecha) || "Fecha por confirmar")} · ${esc(x.competicion)}${x.jornada ? " · " + esc(x.jornada) : ""}</span><br><span class="small" style="color:${!ex ? "var(--accent)" : cambia ? "var(--warn)" : "var(--muted)"}">${esc(nota)}</span></span><span></span></label>`;
       });
       $("#impPrev", m).innerHTML = encontrados.length ? `<div class="stack"><b>${encontrados.length} partidos encontrados</b>${filas.join("")}</div>` : `<div class="vacio">No he encontrado partidos.</div>`;
       b.textContent = encontrados.length ? "Guardar los marcados" : "✨ Analizar";
     };
-    $$("[data-fuente]", m).forEach((x) => x.addEventListener("click", () => { const f = FUENTES[x.dataset.fuente]; encontrados = []; analizar({ url: f.url, texto: `(Calendario de ${f.nombre})` }, f.nombre); }));
+    $("#impOK", m).addEventListener("click", () => { encontrados = []; analizar({ lista: OKLIGA_2627 }, "OK Liga"); });
     b.addEventListener("click", async () => {
       if (encontrados.length) {
         const ops = [];
         encontrados.forEach((x, i) => {
           if (!$(`#imp${i}`, m)?.checked) return;
           const { _ex, ...datos } = x;
-          if (_ex) ops.push({ op: "update", col: "partidos", id: _ex.id, data: { fecha: datos.fecha, lugar: datos.lugar || _ex.lugar, jornada: datos.jornada || _ex.jornada, editado: new Date().toISOString() } });
+          if (_ex) ops.push({ op: "update", col: "partidos", id: _ex.id, data: { fecha: datos.fecha || _ex.fecha, lugar: datos.lugar || _ex.lugar, jornada: datos.jornada || _ex.jornada, resultado: datos.resultado || _ex.resultado || "", editado: new Date().toISOString() } });
           else ops.push({ op: "set", col: "partidos", id: uid(), data: { ...datos, creado: new Date().toISOString(), creadoPor: yoId } });
         });
         if (ops.length) escribir(ops);
         toast(`${ops.length} partidos guardados`); cerrarModal(); render(); return;
       }
-      const url = $("#impUrl", m)?.value.trim(); const texto = $("#impTxt", m).value.trim();
-      if (!url && !texto) return toast("Elige un calendario, pega un enlace o pega el texto");
-      analizar({ url, texto }, "Analizando");
+      const texto = $("#impTxt", m).value.trim();
+      if (!texto) return toast("Pega el calendario en el cuadro de texto");
+      analizar({ texto }, "Analizando");
     });
   });
 }

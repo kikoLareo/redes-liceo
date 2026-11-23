@@ -127,30 +127,6 @@ function respuestaEnStreaming(params: Anthropic.Beta.MessageCreateParamsStreamin
   });
 }
 
-// Descarga una página pública y la deja en texto plano (sin scripts ni estilos).
-async function textoDeWeb(enlace: string) {
-  const u = new URL(enlace);
-  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("solo enlaces web");
-  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[)/.test(u.hostname) || /^\d+\.\d+\.\d+\.\d+$/.test(u.hostname))
-    throw new Error("enlace no permitido");
-  const r = await fetch(u, {
-    headers: { "user-agent": "Mozilla/5.0 (compatible; RedesLiceo/1.0)", accept: "text/html,*/*" },
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!r.ok) throw new Error(`la página respondió ${r.status}`);
-  const html = await r.text();
-  return html
-    .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<\/(tr|p|div|li|h\d|table|section|article)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/t[dh]>/gi, " | ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"')
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n+/g, "\n")
-    .trim();
-}
-
 type MsgIn ={ role: "user" | "assistant"; content: string };
 
 const PARTIDO_SCHEMA = {
@@ -231,16 +207,8 @@ ${instruccion ? `\nPETICIÓN CONCRETA: ${instruccion}` : ""}`;
 
     // Devuelve en streaming el JSON { partidos: [...] } (la web lo junta y lo lee al final).
     if (ruta === "/api/ia/importar") {
-      let texto = String(b.texto || "");
-      const enlace = String(b.url || "").trim();
-      if (enlace) {
-        try {
-          texto = `Página ${enlace}:\n${await textoDeWeb(enlace)}\n\n${texto}`;
-        } catch (e) {
-          return Response.json({ error: "enlace", detalle: String((e as Error).message || e) }, { status: 422 });
-        }
-      }
-      texto = texto.slice(0, 120000);
+      // Solo texto pegado a mano: no descargamos webs de terceros (la RFEP prohíbe la extracción automatizada).
+      const texto = String(b.texto || "").slice(0, 120000);
       if (!texto.trim()) return Response.json({ error: "vacío" }, { status: 400 });
       return respuestaEnStreaming({
         model: MODELO, max_tokens: 32000,
