@@ -78,6 +78,7 @@ async function api(ruta, opts = {}) {
 async function cargar() {
   const r = await api("/api/datos"); if (!r.ok) throw new Error("datos");
   const j = await r.json(); IA = !!j.ia; for (const c of COLS) D[c] = j[c] || [];
+  asegurarEquipo();
 }
 // Aplica cambios en local al instante y los manda a Netlify.
 async function escribir(lista) {
@@ -165,13 +166,24 @@ function vistaLogin() {
     try { await cargar(); D._cargado = true; render(); } catch { toast("Clave incorrecta"); }
   });
 }
+// El equipo de redes: se crea solo la primera vez (ids fijos, así no se duplica).
+const EQUIPO_BASE = [
+  { id: "kiko", nombre: "Kiko", color: "#ACD4B7" },
+  { id: "adri", nombre: "Adri", color: "#8EC5FF" },
+  { id: "gonga", nombre: "Gonga", color: "#F3C66E" },
+];
+function asegurarEquipo() {
+  const faltan = EQUIPO_BASE.filter((b) => !D.personas.some((p) => p.id === b.id || (p.nombre || "").trim().toLowerCase() === b.nombre.toLowerCase()));
+  if (faltan.length) escribir(faltan.map((b) => ({ op: "set", col: "personas", id: b.id, data: { nombre: b.nombre, color: b.color, calToken: uid(24), creado: new Date().toISOString() } })));
+}
 function vistaQuienEres() {
   titulo("");
   app.innerHTML = `<div class="login" style="max-width:560px">
     <h1>¿Quién eres?</h1>
     <p class="muted">Así sabremos qué tareas son tuyas y te prepararemos tu calendario.</p>
     <div class="personas-ini">${D.personas.map((p) => `<button data-p="${p.id}">${av(p)}${esc(p.nombre)}</button>`).join("")}</div>
-    <form id="fNueva" class="row" style="justify-content:center"><input class="inp" id="nNom" placeholder="Soy nuevo/a: mi nombre" style="flex:1" required><button class="btn pri">Añadirme</button></form>
+    <details class="small muted"><summary>No estoy en la lista</summary>
+    <form id="fNueva" class="row" style="justify-content:center;margin-top:10px"><input class="inp" id="nNom" placeholder="Mi nombre" style="flex:1" required><button class="btn pri">Añadirme</button></form></details>
   </div>`;
   $$("[data-p]").forEach((b) => b.addEventListener("click", () => { yoId = b.dataset.p; ls.set("rl-yo", yoId); render(); }));
   $("#fNueva").addEventListener("submit", (e) => {
@@ -182,31 +194,67 @@ function vistaQuienEres() {
 }
 
 // ---------- INICIO ----------
+// ---------- INICIO: calendario de los próximos días + próximas tareas ----------
+const inicioEstado = Object.assign({ quien: "mias" }, ls.get("rl-inicio", {}));
+function filtroPersonaTareas(ts, quien) {
+  if (quien === "mias") return ts.filter((t) => (t.asignados || []).includes(yoId));
+  if (quien === "todas") return ts;
+  if (quien === "compartidas") return ts.filter((t) => (t.asignados || []).length > 1);
+  if (quien === "sin") return ts.filter((t) => !(t.asignados || []).length);
+  return ts.filter((t) => (t.asignados || []).includes(quien));
+}
+function chipsPersonas(sel, extra = []) {
+  const otros = D.personas.filter((p) => p.id !== yoId);
+  return [["mias", "Mías"], ...otros.map((p) => [p.id, p.nombre.split(" ")[0]]), ["compartidas", "🤝 Compartidas"], ["todas", "👥 Todas"], ...extra]
+    .map(([k, v]) => `<button class="chip" data-quien="${esc(k)}" aria-pressed="${sel === k}">${k === "mias" ? av(yo()) : persona(k) ? av(persona(k)) : ""}${esc(v)}</button>`).join("");
+}
 function vistaInicio() {
   titulo("");
   const ahora = new Date(); const h = hoyStr();
-  const proximo = D.partidos.filter((p) => p.fecha && aFecha(p.fecha) > new Date(ahora - 3 * 36e5)).sort((a, b) => a.fecha.localeCompare(b.fecha))[0];
-  const mias = D.tareas.filter((t) => t.estado !== "hecho" && (t.asignados || []).includes(yoId)).sort((a, b) => (a.fecha || "9").localeCompare(b.fecha || "9"));
-  const semana = eventos().filter((e) => e.fecha.slice(0, 10) >= h && e.fecha.slice(0, 10) <= sumarDias(h, 6) && (e.tipo !== "tarea" || !e.hecho));
+  if (!inicioEstado.dia || inicioEstado.dia < h) inicioEstado.dia = h;
   const saludo = ahora.getHours() < 13 ? "Buenos días" : ahora.getHours() < 21 ? "Buenas tardes" : "Buenas noches";
   const instalada = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-  app.innerHTML = `
-    <p class="eyebrow">${esc(fechaLarga(h))}</p>
-    <h1>${saludo}, ${esc(yo().nombre.split(" ")[0])}</h1>
-    ${!instalada && /iPhone|iPad/.test(navigator.userAgent) ? `<a class="card row" href="#/instalar" style="margin-top:14px;gap:12px"><span class="ico">📲</span><span><b>Añádela a tu pantalla de inicio</b><br><span class="muted small">Y ábrela como una app más del iPhone.</span></span></a>` : ""}
-    <div class="sec">
-      <div class="between"><h2>Próximo partido</h2><a class="btn sm ghost" href="#/partidos">Todos</a></div>
-      ${proximo ? partidoCard(proximo, true) : `<div class="vacio">No hay partidos próximos. <a href="#/partidos">Añádelos</a>.</div>`}
-    </div>
-    <div class="sec">
-      <div class="between"><h2>Mis tareas</h2><a class="btn sm ghost" href="#/tareas">Ver todas</a></div>
-      <div class="stack">${mias.slice(0, 6).map(tareaHTML).join("") || `<div class="vacio">No tienes tareas pendientes. 🎉</div>`}</div>
-    </div>
-    <div class="sec">
-      <div class="between"><h2>Esta semana</h2><a class="btn sm ghost" href="#/calendario">Calendario</a></div>
-      ${agendaHTML(semana, { vacia: "Semana tranquila: no hay nada en el calendario." })}
-    </div>`;
-  enganchaTareas(app); enganchaEventos(app, semana);
+  const evs = eventos().filter((e) => !(e.tipo === "tarea" && e.hecho));
+  const porDia = {}; for (const e of evs) (porDia[e.fecha.slice(0, 10)] ||= []).push(e);
+  const proximo = D.partidos.filter((p) => p.fecha && aFecha(p.fecha) > new Date(ahora - 3 * 36e5)).sort((a, b) => a.fecha.localeCompare(b.fecha))[0];
+
+  const pinta = () => {
+    let tira = "";
+    for (let i = 0; i < 21; i++) {
+      const s = sumarDias(h, i); const d = aFecha(s); const lista = porDia[s] || []; const pa = lista.find((e) => e.tipo === "partido");
+      tira += `<button class="tdia${s === inicioEstado.dia ? " sel" : ""}${s === h ? " hoy" : ""}" data-dia="${s}">
+        <span class="ds">${i === 0 ? "hoy" : DSEM[d.getDay()]}</span><b>${d.getDate()}</b>
+        <span class="dots">${pa ? `<span class="dot t-partido gordo"></span>` : ""}${lista.filter((e) => e.tipo !== "partido").slice(0, 4).map((e) => `<span class="dot t-${e.tipo}"></span>`).join("")}</span></button>`;
+    }
+    const delDia = porDia[inicioEstado.dia] || [];
+    const ts = filtroPersonaTareas(D.tareas.filter((t) => t.estado !== "hecho"), inicioEstado.quien)
+      .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || (b.prioridad === "alta") - (a.prioridad === "alta"));
+    app.innerHTML = `
+      <p class="eyebrow">${esc(fechaLarga(h))}</p><h1>${saludo}, ${esc(yo().nombre.split(" ")[0])}</h1>
+      ${!instalada && /iPhone|iPad/.test(navigator.userAgent) ? `<a class="aviso row" href="#/instalar" style="margin-top:12px;text-decoration:none">📲 <span>Añádela a tu pantalla de inicio</span></a>` : ""}
+      <div class="sec">
+        <div class="between"><h2>Calendario</h2><a class="btn sm ghost" href="#/calendario">Ver mes ›</a></div>
+        <div class="tira" id="tira">${tira}</div>
+        <div class="between" style="margin:12px 0 8px"><h3>${esc(fechaLarga(inicioEstado.dia))}</h3><button class="btn sm" id="anadirDia">+ Añadir</button></div>
+        ${delDia.length ? `<div class="agenda">${delDia.map(evHTML).join("")}</div>` : `<div class="vacio">Nada este día.</div>`}
+      </div>
+      <div class="sec">
+        <div class="between"><h2>Próximas tareas</h2><button class="btn sm pri" id="nuevaT">+ Tarea</button></div>
+        <div class="chips">${chipsPersonas(inicioEstado.quien)}</div>
+        <div class="stack" style="margin-top:10px">${ts.slice(0, 10).map(tareaHTML).join("") || `<div class="vacio">No hay tareas pendientes aquí. 🎉</div>`}</div>
+        ${ts.length > 10 ? `<a class="btn sm ghost full" href="#/tareas" style="margin-top:8px">Ver las ${ts.length} ›</a>` : ""}
+      </div>
+      <div class="sec">
+        <div class="between"><h2>Próximo partido</h2><a class="btn sm ghost" href="#/partidos">Todos ›</a></div>
+        ${proximo ? partidoCard(proximo, true) : `<div class="vacio">No hay partidos próximos. <a href="#/partidos">Añádelos</a>.</div>`}
+      </div>`;
+    $$("[data-dia]").forEach((b) => b.addEventListener("click", () => { inicioEstado.dia = b.dataset.dia; const x = $("#tira").scrollLeft; pinta(); $("#tira").scrollLeft = x; }));
+    $$("[data-quien]").forEach((b) => b.addEventListener("click", () => { inicioEstado.quien = b.dataset.quien; ls.set("rl-inicio", { quien: inicioEstado.quien }); const y = scrollY; pinta(); scrollTo(0, y); }));
+    $("#anadirDia").addEventListener("click", () => menuAnadir(inicioEstado.dia));
+    $("#nuevaT").addEventListener("click", () => { const asig = persona(inicioEstado.quien) ? [inicioEstado.quien] : [yoId]; const id = crear("tareas", { titulo: "", estado: "pendiente", asignados: asig }); location.hash = `#/tarea/${id}`; });
+    enganchaTareas(app); enganchaEventos(app, delDia);
+  };
+  pinta();
 }
 function partidoCard(p, destacado) {
   const nT = D.tareas.filter((t) => t.partidoId === p.id); const hechas = nT.filter((t) => t.estado === "hecho").length;
@@ -308,24 +356,18 @@ function enganchaTareas(el) {
 function vistaTareas() {
   titulo("Tareas");
   const pinta = () => {
-    let ts = D.tareas.slice();
-    if (tareaEstado.quien === "mias") ts = ts.filter((t) => (t.asignados || []).includes(yoId));
-    if (tareaEstado.quien === "sin") ts = ts.filter((t) => !(t.asignados || []).length);
+    const ts = filtroPersonaTareas(D.tareas.slice(), tareaEstado.quien);
     const orden = (a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || (b.prioridad === "alta") - (a.prioridad === "alta");
     const grupo = (k, lista, max) => lista.length ? `<div class="grupo-cab">${ESTADOS_T[k]} <span>· ${lista.length}</span></div><div class="stack">${lista.slice(0, max).map(tareaHTML).join("")}</div>` : "";
     const hechas = ts.filter((t) => t.estado === "hecho").sort((a, b) => (b.hechoEn || b.editado || "").localeCompare(a.hechoEn || a.editado || ""));
     app.innerHTML = `
       <div class="between"><h1>Tareas</h1><button class="btn pri sm" id="nueva">+ Nueva</button></div>
-      <div class="chips" style="margin-top:12px">
-        <button class="chip" data-q="mias" aria-pressed="${tareaEstado.quien === "mias"}">👤 Mías</button>
-        <button class="chip" data-q="todas" aria-pressed="${tareaEstado.quien === "todas"}">👥 Todo el equipo</button>
-        <button class="chip" data-q="sin" aria-pressed="${tareaEstado.quien === "sin"}">Sin asignar</button>
-      </div>
+      <div class="chips" style="margin-top:12px">${chipsPersonas(tareaEstado.quien, [["sin", "Sin asignar"]])}</div>
       ${grupo("curso", ts.filter((t) => t.estado === "curso").sort(orden), 999)}
       ${grupo("pendiente", ts.filter((t) => (t.estado || "pendiente") === "pendiente").sort(orden), 999)}
       ${grupo("hecho", hechas, 15)}
       ${ts.length ? "" : `<div class="vacio" style="margin-top:16px">No hay tareas aquí.</div>`}`;
-    $$("[data-q]").forEach((b) => b.addEventListener("click", () => { tareaEstado.quien = b.dataset.q; ls.set("rl-tareas", tareaEstado); pinta(); }));
+    $$("[data-quien]").forEach((b) => b.addEventListener("click", () => { tareaEstado.quien = b.dataset.quien; ls.set("rl-tareas", tareaEstado); pinta(); }));
     $("#nueva").addEventListener("click", () => { const id = crear("tareas", { titulo: "", estado: "pendiente", asignados: [yoId] }); location.hash = `#/tarea/${id}`; });
     enganchaTareas(app);
   };
@@ -656,30 +698,76 @@ function formPartido(p = {}) {
     onBorrar: p.id ? () => { borrar("partidos", p.id); if (location.hash.includes(p.id)) location.hash = "#/partidos"; } : null,
   });
 }
+// Calendarios oficiales: se pueden volver a importar para recoger cambios de fecha u hora.
+const FUENTES = [
+  { nombre: "OK Liga", url: "https://www.hockeypatines.fep.es/?liga=3568&vista=calendar" },
+  { nombre: "Champions", url: "https://www.wse.sidgad.com/?liga=339&vista=calendar" },
+];
+const normaliza = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+// ¿Ya tenemos este partido? Mismo rival y competición, y misma jornada (o misma fecha si no hay jornada).
+function partidoExistente(x) {
+  const r = normaliza(x.rival);
+  return D.partidos.find((p) => {
+    const pr = normaliza(p.rival);
+    if (!(pr === r || pr.includes(r) || r.includes(pr)) || p.competicion !== x.competicion || !!p.casa !== !!x.casa) return false;
+    if (p.jornada && x.jornada) return normaliza(p.jornada) === normaliza(x.jornada);
+    return (p.fecha || "").slice(0, 10) === (x.fecha || "").slice(0, 10);
+  });
+}
+async function leerImportacion(cuerpo) {
+  const r = await api("/api/ia/importar", { method: "POST", body: JSON.stringify(cuerpo) });
+  if (r.status === 422) { const j = await r.json().catch(() => ({})); throw new Error(j.detalle ? `No se pudo abrir la página (${j.detalle}). Copia el calendario y pégalo.` : "No se pudo leer"); }
+  if (!r.ok) throw new Error("No se pudo analizar");
+  const txt = await r.text();
+  const ini = txt.indexOf("{"); const fin = txt.lastIndexOf("}");
+  if (ini < 0) throw new Error(txt.replace(/[_*⚠️]/g, "").trim() || "Respuesta vacía");
+  return JSON.parse(txt.slice(ini, fin + 1)).partidos || [];
+}
 function importarPartidos() {
   abrirModal(`<h2>Importar partidos</h2>
-    ${IA ? `<p class="muted small" style="margin:0">Pega el calendario tal cual (de la web de la OK Liga, de la federación, de un PDF, de un WhatsApp…). La IA saca los partidos del Liceo y te los enseña antes de guardarlos.</p>` : `<p class="muted small" style="margin:0">Sin IA: una línea por partido con el formato <code>2026-12-06 18:00; Rival; casa|fuera; Competición; Lugar</code>.</p>`}
-    <textarea class="inp" id="impTxt" style="min-height:180px" placeholder="Pega aquí el calendario…"></textarea>
+    ${IA ? `<div class="stack"><span class="muted small">Desde los calendarios oficiales (puedes repetirlo cuando cambien horarios: actualiza los que ya están):</span>
+      <div class="row">${FUENTES.map((f, i) => `<button class="btn sm" data-fuente="${i}">🔄 ${esc(f.nombre)}</button>`).join("")}</div>
+      <label class="f">O pega un enlace<input class="inp" id="impUrl" type="url" placeholder="https://…"></label>
+      <label class="f">O pega el calendario en texto<textarea class="inp" id="impTxt" style="min-height:110px" placeholder="Copiado de una web, un PDF, un WhatsApp…"></textarea></label></div>`
+    : `<p class="muted small" style="margin:0">Sin IA: una línea por partido con el formato <code>2026-12-06 18:00; Rival; casa|fuera; Competición; Lugar</code>.</p><textarea class="inp" id="impTxt" style="min-height:180px"></textarea>`}
     <div id="impPrev"></div>
     <div class="pie"><button class="btn ghost" data-cerrar>Cancelar</button><button class="btn pri" id="impGo">${IA ? "✨ Analizar" : "Analizar"}</button></div>`, (m) => {
     let encontrados = [];
-    $("#impGo", m).addEventListener("click", async () => {
-      const b = $("#impGo", m);
-      if (encontrados.length) {
-        const nuevos = encontrados.filter((x, i) => $(`#imp${i}`, m)?.checked);
-        escribir(nuevos.map((x) => ({ op: "set", col: "partidos", id: uid(), data: { ...x, creado: new Date().toISOString(), creadoPor: yoId } })));
-        toast(`${nuevos.length} partidos añadidos`); cerrarModal(); render(); return;
-      }
-      const texto = $("#impTxt", m).value.trim(); if (!texto) return;
-      b.disabled = true; b.textContent = "Analizando…";
+    const b = $("#impGo", m);
+    const analizar = async (cuerpo, etiqueta) => {
+      b.disabled = true; $$("[data-fuente]", m).forEach((x) => (x.disabled = true));
+      $("#impPrev", m).innerHTML = `<div class="vacio escribiendo">${esc(etiqueta)}: leyendo el calendario (puede tardar un poco)</div>`;
       try {
-        if (IA) { const r = await api("/api/ia/importar", { method: "POST", body: JSON.stringify({ texto }) }); if (!r.ok) throw new Error(); encontrados = (await r.json()).partidos || []; }
-        else encontrados = texto.split("\n").map((l) => l.split(";").map((x) => x.trim())).filter((c) => c.length >= 3).map(([f, rival, cf, competicion = "OK Liga", lugar = ""]) => ({ fecha: f.replace(" ", "T"), rival, casa: /casa/i.test(cf), competicion, lugar: lugar || (/casa/i.test(cf) ? "Pazo dos Deportes de Riazor, A Coruña" : ""), jornada: "" }));
-      } catch { toast("No se pudo analizar"); }
-      b.disabled = false;
-      const ya = (x) => D.partidos.some((p) => p.fecha?.slice(0, 10) === x.fecha.slice(0, 10) && p.rival.toLowerCase() === x.rival.toLowerCase());
-      $("#impPrev", m).innerHTML = encontrados.length ? `<div class="stack"><b>${encontrados.length} partidos encontrados</b>${encontrados.map((x, i) => `<label class="item"><input type="checkbox" id="imp${i}" ${ya(x) ? "" : "checked"} style="width:22px;height:22px;accent-color:var(--accent)"><span><span class="tt">${esc(vsTxt(x))}</span><br><span class="muted small">${esc(fechaCorta(x.fecha))} · ${esc(x.competicion)}${x.jornada ? " · " + esc(x.jornada) : ""}${ya(x) ? " · ya estaba" : ""}</span></span><span></span></label>`).join("")}</div>` : `<div class="vacio">No he encontrado partidos.</div>`;
-      b.textContent = encontrados.length ? "Añadir los marcados" : "Analizar";
+        if (IA) encontrados = await leerImportacion(cuerpo);
+        else encontrados = cuerpo.texto.split("\n").map((l) => l.split(";").map((x) => x.trim())).filter((c) => c.length >= 3).map(([f, rival, cf, competicion = "OK Liga", lugar = ""]) => ({ fecha: f.replace(" ", "T"), rival, casa: /casa/i.test(cf), competicion, lugar: lugar || (/casa/i.test(cf) ? "Pazo dos Deportes de Riazor, A Coruña" : ""), jornada: "" }));
+      } catch (e) { encontrados = []; toast(e.message || "No se pudo analizar", 5000); }
+      b.disabled = false; $$("[data-fuente]", m).forEach((x) => (x.disabled = false));
+      encontrados.sort((a, c) => (a.fecha || "").localeCompare(c.fecha || ""));
+      const filas = encontrados.map((x, i) => {
+        const ex = partidoExistente(x); x._ex = ex;
+        const cambia = ex && (ex.fecha !== x.fecha || (x.lugar && ex.lugar !== x.lugar));
+        const nota = !ex ? "nuevo" : cambia ? `cambia: ${fechaCorta(ex.fecha)} → ${fechaCorta(x.fecha)}` : "ya estaba";
+        return `<label class="item"><input type="checkbox" id="imp${i}" ${!ex || cambia ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)"><span><span class="tt">${esc(vsTxt(x))}</span><br><span class="muted small">${esc(fechaCorta(x.fecha))} · ${esc(x.competicion)}${x.jornada ? " · " + esc(x.jornada) : ""}</span><br><span class="small" style="color:${!ex ? "var(--accent)" : cambia ? "var(--warn)" : "var(--muted)"}">${esc(nota)}</span></span><span></span></label>`;
+      });
+      $("#impPrev", m).innerHTML = encontrados.length ? `<div class="stack"><b>${encontrados.length} partidos encontrados</b>${filas.join("")}</div>` : `<div class="vacio">No he encontrado partidos.</div>`;
+      b.textContent = encontrados.length ? "Guardar los marcados" : "✨ Analizar";
+    };
+    $$("[data-fuente]", m).forEach((x) => x.addEventListener("click", () => { const f = FUENTES[x.dataset.fuente]; encontrados = []; analizar({ url: f.url, texto: `(Calendario de ${f.nombre})` }, f.nombre); }));
+    b.addEventListener("click", async () => {
+      if (encontrados.length) {
+        const ops = [];
+        encontrados.forEach((x, i) => {
+          if (!$(`#imp${i}`, m)?.checked) return;
+          const { _ex, ...datos } = x;
+          if (_ex) ops.push({ op: "update", col: "partidos", id: _ex.id, data: { fecha: datos.fecha, lugar: datos.lugar || _ex.lugar, jornada: datos.jornada || _ex.jornada, editado: new Date().toISOString() } });
+          else ops.push({ op: "set", col: "partidos", id: uid(), data: { ...datos, creado: new Date().toISOString(), creadoPor: yoId } });
+        });
+        if (ops.length) escribir(ops);
+        toast(`${ops.length} partidos guardados`); cerrarModal(); render(); return;
+      }
+      const url = $("#impUrl", m)?.value.trim(); const texto = $("#impTxt", m).value.trim();
+      if (!url && !texto) return toast("Elige un calendario, pega un enlace o pega el texto");
+      analizar({ url, texto }, "Analizando");
     });
   });
 }

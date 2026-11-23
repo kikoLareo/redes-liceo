@@ -127,7 +127,31 @@ function respuestaEnStreaming(params: Anthropic.Beta.MessageCreateParamsStreamin
   });
 }
 
-type MsgIn = { role: "user" | "assistant"; content: string };
+// Descarga una página pública y la deja en texto plano (sin scripts ni estilos).
+async function textoDeWeb(enlace: string) {
+  const u = new URL(enlace);
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("solo enlaces web");
+  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[)/.test(u.hostname) || /^\d+\.\d+\.\d+\.\d+$/.test(u.hostname))
+    throw new Error("enlace no permitido");
+  const r = await fetch(u, {
+    headers: { "user-agent": "Mozilla/5.0 (compatible; RedesLiceo/1.0)", accept: "text/html,*/*" },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!r.ok) throw new Error(`la página respondió ${r.status}`);
+  const html = await r.text();
+  return html
+    .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/(tr|p|div|li|h\d|table|section|article)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/t[dh]>/gi, " | ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
+}
+
+type MsgIn ={ role: "user" | "assistant"; content: string };
 
 const PARTIDO_SCHEMA = {
   type: "object",
@@ -205,21 +229,25 @@ ${instruccion ? `\nPETICIÓN CONCRETA: ${instruccion}` : ""}`;
       });
     }
 
+    // Devuelve en streaming el JSON { partidos: [...] } (la web lo junta y lo lee al final).
     if (ruta === "/api/ia/importar") {
-      const texto = String(b.texto || "").slice(0, 40000);
+      let texto = String(b.texto || "");
+      const enlace = String(b.url || "").trim();
+      if (enlace) {
+        try {
+          texto = `Página ${enlace}:\n${await textoDeWeb(enlace)}\n\n${texto}`;
+        } catch (e) {
+          return Response.json({ error: "enlace", detalle: String((e as Error).message || e) }, { status: 422 });
+        }
+      }
+      texto = texto.slice(0, 120000);
       if (!texto.trim()) return Response.json({ error: "vacío" }, { status: 400 });
-      const client = cliente();
-      const r = await client.beta.messages.create({
-        ...FALLBACK(),
-        model: MODELO, max_tokens: 16000,
+      return respuestaEnStreaming({
+        model: MODELO, max_tokens: 32000,
         output_config: { effort: "low", format: { type: "json_schema", schema: PARTIDO_SCHEMA as unknown as Record<string, unknown> } },
-        system: "Extraes partidos del primer equipo del HC Liceo (hockey sobre patines, A Coruña) a partir de texto pegado (calendarios, webs, notas). Solo partidos en los que juega el Liceo. 'casa' = true si el Liceo es local. Si el texto no da el año, deduce la temporada 2026-27 (septiembre 2026 a junio 2027). Si no hay hora, usa solo la fecha. Si en casa y no se dice lugar, pon 'Pazo dos Deportes de Riazor, A Coruña'.",
+        system: "Extraes partidos del primer equipo del HC Liceo (hockey sobre patines, A Coruña; también aparece como 'Liceo', 'HC Liceo' o 'Deportivo Liceo') a partir de texto (calendarios, webs, notas). Solo partidos en los que juega el Liceo, de todas las jornadas o fases que aparezcan (ida y vuelta). La competición se deduce de la página o de la pista que se te dé: la liga española es 'OK Liga'; la WSE Champions League europea es 'Champions'. En 'jornada' pon 'Jornada N' o la fase (p. ej. 'Fase de grupos J3', 'Cuartos ida'). 'casa' = true si el Liceo es local (aparece primero). Si el texto no da el año, deduce la temporada 2026-27 (septiembre 2026 a junio 2027). Si no hay hora, usa solo la fecha. Si en casa y no se dice lugar, pon 'Pazo dos Deportes de Riazor, A Coruña'. Si es fuera y no se dice lugar, pon la ciudad del rival si la sabes con seguridad o deja vacío.",
         messages: [{ role: "user", content: `(Hoy es ${hoy()}.)\n\n${texto}` }],
       });
-      if (r.stop_reason === "refusal") return Response.json({ error: "rechazo" }, { status: 422 });
-      const bloque = r.content.find((c) => c.type === "text");
-      const json = bloque && bloque.type === "text" ? JSON.parse(bloque.text) : { partidos: [] };
-      return Response.json(json);
     }
 
     return Response.json({ error: "no encontrado" }, { status: 404 });
