@@ -1,0 +1,22 @@
+{
+  "name": "redes-liceo",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0",
+    "@netlify/blobs": "^11.1.10"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^6.1.1",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

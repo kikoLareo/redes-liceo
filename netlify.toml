@@ -1,0 +1,19 @@
+# Redes HC Liceo (proyecto de Netlify: redes-liceo)
+[build]
+  publish = "public"
+  command = "echo 'sin compilación'"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    Referrer-Policy = "no-referrer"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
