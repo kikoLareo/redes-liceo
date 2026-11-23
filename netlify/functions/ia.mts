@@ -116,7 +116,9 @@ function respuestaEnStreaming(params: Anthropic.Beta.MessageCreateParamsStreamin
           ? "Demasiadas peticiones a la IA ahora mismo. Espera un momento y vuelve a probar."
           : e instanceof Anthropic.AuthenticationError
             ? "La clave de la IA (ANTHROPIC_API_KEY) no es válida."
-            : "Error al hablar con la IA. Vuelve a intentarlo.";
+            : e instanceof Anthropic.BadRequestError
+              ? `Anthropic ha rechazado la petición: ${(e.error as any)?.error?.message || e.message}. Si habla de «credit balance», hay que recargar saldo en console.anthropic.com → Plans & Billing.`
+              : "Error al hablar con la IA. Vuelve a intentarlo.";
         ctrl.enqueue(enc.encode(`\n\n⚠️ ${msg}`));
       }
       ctrl.close();
